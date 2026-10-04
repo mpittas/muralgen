@@ -220,3 +220,8 @@ async function runJob(id: string) {
     if (!rerouted) setStatus(id, null);
   }
 }
+
+/** True while this tab is queueing or running the given design's generation. */
+export function isGenerating(id: string): boolean {
+  return queue.includes(id) || controllers.has(id);
+}

@@ -2,20 +2,14 @@
 
 import { useMemo } from "react";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
-import { deleteBlobs, clearAllBlobs, newId } from "@/lib/blob-store";
-import type {
-  Composite,
-  Design,
-  Project,
-  Wall,
-} from "@/lib/types";
+import { deleteBlobs, newId } from "@/lib/blob-store";
+import type { Composite, Design, Project, Wall } from "@/lib/types";
 
 /**
- * Client-side data layer (localStorage for metadata, IndexedDB for images).
- * All mutations go through these actions, so swapping in Firestore later means
- * re-implementing this one file (+ blob-store.ts for Storage).
+ * Working copy of the signed-in user's data. All UI mutations go through these actions.
+ * Persistence is handled by lib/firebase/sync.ts, which mirrors this store to Firestore
+ * (metadata) and blob-store.ts mirrors images to Cloud Storage.
  */
 
 interface Data {
@@ -44,16 +38,23 @@ interface Actions {
   chooseDesign: (projectId: string, designId: string | null) => void;
 
   createComposite: (
-    input: Pick<Composite, "projectId" | "wallId" | "designId" | "name" | "settings">,
+    input: Pick<
+      Composite,
+      "projectId" | "wallId" | "designId" | "name" | "settings"
+    >,
   ) => Composite;
   addComposite: (composite: Composite) => void;
   updateComposite: (id: string, patch: Partial<Composite>) => void;
   removeComposite: (id: string) => void;
 
+  /** Merges records created outside the UI (the one-time import of pre-account local data). */
+  importData: (data: Partial<Data>) => void;
+  /** Empties the in-memory store (sign-out, account switch). Does not touch the cloud. */
   resetAll: () => void;
 }
 
 export type AppState = Data & Actions;
+export type { Data as AppData };
 
 const empty: Data = { projects: {}, walls: {}, designs: {}, composites: {} };
 
@@ -63,228 +64,204 @@ function omit<T>(rec: Record<string, T>, ...keys: string[]): Record<string, T> {
   return next;
 }
 
-export const useAppStore = create<AppState>()(
-  persist(
-    (set, get) => ({
-      ...empty,
+export const useAppStore = create<AppState>()((set, get) => ({
+  ...empty,
 
-      createProject: (input) => {
-        const now = Date.now();
-        const project: Project = {
-          description: "",
-          location: "",
-          client: "",
-          tags: [],
-          status: "draft",
-          notes: "",
-          starred: false,
-          archived: false,
-          ...input,
-          id: newId("prj"),
-          createdAt: now,
-          updatedAt: now,
-        };
-        set((s) => ({ projects: { ...s.projects, [project.id]: project } }));
-        return project;
-      },
+  createProject: (input) => {
+    const now = Date.now();
+    const project: Project = {
+      description: "",
+      location: "",
+      client: "",
+      tags: [],
+      status: "draft",
+      notes: "",
+      starred: false,
+      archived: false,
+      ...input,
+      id: newId("prj"),
+      createdAt: now,
+      updatedAt: now,
+    };
+    set((s) => ({ projects: { ...s.projects, [project.id]: project } }));
+    return project;
+  },
 
-      updateProject: (id, patch) =>
-        set((s) => {
-          const prev = s.projects[id];
-          if (!prev) return s;
-          return {
-            projects: {
-              ...s.projects,
-              [id]: { ...prev, ...patch, updatedAt: Date.now() },
-            },
-          };
-        }),
-
-      deleteProject: (id) => {
-        const s = get();
-        const walls = Object.values(s.walls).filter((w) => w.projectId === id);
-        const designs = Object.values(s.designs).filter((d) => d.projectId === id);
-        const composites = Object.values(s.composites).filter(
-          (c) => c.projectId === id,
-        );
-        void deleteBlobs([
-          ...walls.flatMap((w) => [w.imageId, w.thumbId]),
-          ...designs.flatMap((d) => [d.imageId, d.thumbId]),
-          ...composites.flatMap((c) => [c.maskId, c.resultId, c.thumbId]),
-        ]);
-        set((st) => ({
-          projects: omit(st.projects, id),
-          walls: omit(st.walls, ...walls.map((w) => w.id)),
-          designs: omit(st.designs, ...designs.map((d) => d.id)),
-          composites: omit(st.composites, ...composites.map((c) => c.id)),
-        }));
-      },
-
-      addWall: (wall) =>
-        set((s) => ({
-          walls: { ...s.walls, [wall.id]: wall },
-          projects: touch(s.projects, wall.projectId),
-        })),
-
-      updateWall: (id, patch) =>
-        set((s) => {
-          const prev = s.walls[id];
-          if (!prev) return s;
-          return { walls: { ...s.walls, [id]: { ...prev, ...patch } } };
-        }),
-
-      removeWall: (id) => {
-        const s = get();
-        const wall = s.walls[id];
-        if (!wall) return;
-        const composites = Object.values(s.composites).filter(
-          (c) => c.wallId === id,
-        );
-        void deleteBlobs([
-          wall.imageId,
-          wall.thumbId,
-          ...composites.flatMap((c) => [c.maskId, c.resultId, c.thumbId]),
-        ]);
-        set((st) => ({
-          walls: omit(st.walls, id),
-          composites: omit(st.composites, ...composites.map((c) => c.id)),
-          projects: touch(st.projects, wall.projectId),
-        }));
-      },
-
-      addDesign: (design) =>
-        set((s) => ({
-          designs: { ...s.designs, [design.id]: design },
-          projects: touch(s.projects, design.projectId),
-        })),
-
-      updateDesign: (id, patch) =>
-        set((s) => {
-          const prev = s.designs[id];
-          if (!prev) return s;
-          return { designs: { ...s.designs, [id]: { ...prev, ...patch } } };
-        }),
-
-      removeDesign: (id) => {
-        const s = get();
-        const design = s.designs[id];
-        if (!design) return;
-        const composites = Object.values(s.composites).filter(
-          (c) => c.designId === id,
-        );
-        void deleteBlobs([
-          design.imageId,
-          design.thumbId,
-          ...composites.flatMap((c) => [c.maskId, c.resultId, c.thumbId]),
-        ]);
-        set((st) => ({
-          designs: omit(st.designs, id),
-          composites: omit(st.composites, ...composites.map((c) => c.id)),
-          projects: touch(st.projects, design.projectId),
-        }));
-      },
-
-      chooseDesign: (projectId, designId) =>
-        set((s) => {
-          const designs = { ...s.designs };
-          for (const d of Object.values(designs)) {
-            if (d.projectId !== projectId) continue;
-            const chosen = d.id === designId;
-            if (d.chosen !== chosen) designs[d.id] = { ...d, chosen };
-          }
-          const project = s.projects[projectId];
-          const projects =
-            project && designId && project.status === "draft"
-              ? {
-                  ...s.projects,
-                  [projectId]: { ...project, status: "designing" as const },
-                }
-              : s.projects;
-          return { designs, projects: touch(projects, projectId) };
-        }),
-
-      createComposite: (input) => {
-        const now = Date.now();
-        const composite: Composite = {
-          ...input,
-          id: newId("cmp"),
-          createdAt: now,
-          updatedAt: now,
-        };
-        set((s) => ({
-          composites: { ...s.composites, [composite.id]: composite },
-          projects: touch(s.projects, composite.projectId),
-        }));
-        return composite;
-      },
-
-      addComposite: (composite) =>
-        set((s) => ({
-          composites: { ...s.composites, [composite.id]: composite },
-          projects: touch(s.projects, composite.projectId),
-        })),
-
-      updateComposite: (id, patch) =>
-        set((s) => {
-          const prev = s.composites[id];
-          if (!prev) return s;
-          return {
-            composites: {
-              ...s.composites,
-              [id]: { ...prev, ...patch, updatedAt: Date.now() },
-            },
-          };
-        }),
-
-      removeComposite: (id) => {
-        const c = get().composites[id];
-        if (!c) return;
-        void deleteBlobs([c.maskId, c.resultId, c.thumbId]);
-        set((s) => {
-          const project = s.projects[c.projectId];
-          const projects =
-            project?.coverCompositeId === id
-              ? {
-                  ...s.projects,
-                  [c.projectId]: { ...project, coverCompositeId: undefined },
-                }
-              : s.projects;
-          return { composites: omit(s.composites, id), projects };
-        });
-      },
-
-      resetAll: () => {
-        void clearAllBlobs();
-        set({ ...empty });
-      },
+  updateProject: (id, patch) =>
+    set((s) => {
+      const prev = s.projects[id];
+      if (!prev) return s;
+      return {
+        projects: {
+          ...s.projects,
+          [id]: { ...prev, ...patch, updatedAt: Date.now() },
+        },
+      };
     }),
-    {
-      name: "muralgen:v1",
-      version: 1,
-      partialize: (s) => ({
-        projects: s.projects,
-        walls: s.walls,
-        designs: s.designs,
-        composites: s.composites,
-      }),
-      // Generations that were in flight when the tab closed can never finish.
-      merge: (persisted, current) => {
-        const p = (persisted ?? {}) as Partial<Data>;
-        const designs = { ...(p.designs ?? {}) };
-        for (const d of Object.values(designs)) {
-          if (d.status === "pending") {
-            designs[d.id] = {
-              ...d,
-              status: "error",
-              error: "Generation was interrupted.",
-            };
-          }
-        }
-        return { ...current, ...p, designs };
-      },
-    },
-  ),
-);
+
+  deleteProject: (id) => {
+    const s = get();
+    const walls = Object.values(s.walls).filter((w) => w.projectId === id);
+    const designs = Object.values(s.designs).filter((d) => d.projectId === id);
+    const composites = Object.values(s.composites).filter(
+      (c) => c.projectId === id,
+    );
+    void deleteBlobs([
+      ...walls.flatMap((w) => [w.imageId, w.thumbId]),
+      ...designs.flatMap((d) => [d.imageId, d.thumbId]),
+      ...composites.flatMap((c) => [c.maskId, c.resultId, c.thumbId]),
+    ]);
+    set((st) => ({
+      projects: omit(st.projects, id),
+      walls: omit(st.walls, ...walls.map((w) => w.id)),
+      designs: omit(st.designs, ...designs.map((d) => d.id)),
+      composites: omit(st.composites, ...composites.map((c) => c.id)),
+    }));
+  },
+
+  addWall: (wall) =>
+    set((s) => ({
+      walls: { ...s.walls, [wall.id]: wall },
+      projects: touch(s.projects, wall.projectId),
+    })),
+
+  updateWall: (id, patch) =>
+    set((s) => {
+      const prev = s.walls[id];
+      if (!prev) return s;
+      return { walls: { ...s.walls, [id]: { ...prev, ...patch } } };
+    }),
+
+  removeWall: (id) => {
+    const s = get();
+    const wall = s.walls[id];
+    if (!wall) return;
+    const composites = Object.values(s.composites).filter(
+      (c) => c.wallId === id,
+    );
+    void deleteBlobs([
+      wall.imageId,
+      wall.thumbId,
+      ...composites.flatMap((c) => [c.maskId, c.resultId, c.thumbId]),
+    ]);
+    set((st) => ({
+      walls: omit(st.walls, id),
+      composites: omit(st.composites, ...composites.map((c) => c.id)),
+      projects: touch(st.projects, wall.projectId),
+    }));
+  },
+
+  addDesign: (design) =>
+    set((s) => ({
+      designs: { ...s.designs, [design.id]: design },
+      projects: touch(s.projects, design.projectId),
+    })),
+
+  updateDesign: (id, patch) =>
+    set((s) => {
+      const prev = s.designs[id];
+      if (!prev) return s;
+      return { designs: { ...s.designs, [id]: { ...prev, ...patch } } };
+    }),
+
+  removeDesign: (id) => {
+    const s = get();
+    const design = s.designs[id];
+    if (!design) return;
+    const composites = Object.values(s.composites).filter(
+      (c) => c.designId === id,
+    );
+    void deleteBlobs([
+      design.imageId,
+      design.thumbId,
+      ...composites.flatMap((c) => [c.maskId, c.resultId, c.thumbId]),
+    ]);
+    set((st) => ({
+      designs: omit(st.designs, id),
+      composites: omit(st.composites, ...composites.map((c) => c.id)),
+      projects: touch(st.projects, design.projectId),
+    }));
+  },
+
+  chooseDesign: (projectId, designId) =>
+    set((s) => {
+      const designs = { ...s.designs };
+      for (const d of Object.values(designs)) {
+        if (d.projectId !== projectId) continue;
+        const chosen = d.id === designId;
+        if (d.chosen !== chosen) designs[d.id] = { ...d, chosen };
+      }
+      const project = s.projects[projectId];
+      const projects =
+        project && designId && project.status === "draft"
+          ? {
+              ...s.projects,
+              [projectId]: { ...project, status: "designing" as const },
+            }
+          : s.projects;
+      return { designs, projects: touch(projects, projectId) };
+    }),
+
+  createComposite: (input) => {
+    const now = Date.now();
+    const composite: Composite = {
+      ...input,
+      id: newId("cmp"),
+      createdAt: now,
+      updatedAt: now,
+    };
+    set((s) => ({
+      composites: { ...s.composites, [composite.id]: composite },
+      projects: touch(s.projects, composite.projectId),
+    }));
+    return composite;
+  },
+
+  addComposite: (composite) =>
+    set((s) => ({
+      composites: { ...s.composites, [composite.id]: composite },
+      projects: touch(s.projects, composite.projectId),
+    })),
+
+  updateComposite: (id, patch) =>
+    set((s) => {
+      const prev = s.composites[id];
+      if (!prev) return s;
+      return {
+        composites: {
+          ...s.composites,
+          [id]: { ...prev, ...patch, updatedAt: Date.now() },
+        },
+      };
+    }),
+
+  removeComposite: (id) => {
+    const c = get().composites[id];
+    if (!c) return;
+    void deleteBlobs([c.maskId, c.resultId, c.thumbId]);
+    set((s) => {
+      const project = s.projects[c.projectId];
+      const projects =
+        project?.coverCompositeId === id
+          ? {
+              ...s.projects,
+              [c.projectId]: { ...project, coverCompositeId: undefined },
+            }
+          : s.projects;
+      return { composites: omit(s.composites, id), projects };
+    });
+  },
+
+  importData: (data) =>
+    set((s) => ({
+      projects: { ...s.projects, ...data.projects },
+      walls: { ...s.walls, ...data.walls },
+      designs: { ...s.designs, ...data.designs },
+      composites: { ...s.composites, ...data.composites },
+    })),
+
+  resetAll: () => set({ ...empty }),
+}));
 
 function touch(
   projects: Record<string, Project>,

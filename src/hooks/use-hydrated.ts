@@ -1,17 +1,12 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
-
-const noop = () => () => {};
+import { useSyncStore } from "@/store/sync-store";
 
 /**
- * False on the server and during hydration, true afterwards. The data layer lives in
- * the browser (localStorage / IndexedDB) so pages render skeletons until this flips.
+ * True once the signed-in user's data has loaded from Firestore (first snapshot of every
+ * collection, served from the offline cache or the server). False on the server, during
+ * hydration and while loading, so pages render skeletons until then.
  */
 export function useHydrated(): boolean {
-  return useSyncExternalStore(
-    noop,
-    () => true,
-    () => false,
-  );
+  return useSyncStore((s) => s.ready);
 }

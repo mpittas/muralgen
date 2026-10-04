@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Archive, FolderKanban, Plus, Settings, Star } from "lucide-react";
+import { Archive, ChevronsUpDown, FolderKanban, LogOut, Plus, Settings, Star, User } from "lucide-react";
+import { toast } from "sonner";
 import {
   Sidebar,
   SidebarContent,
@@ -17,10 +18,23 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { UserAvatar } from "@/components/user-avatar";
+import { authErrorMessage, signOut } from "@/lib/firebase/auth";
+import { useAuthStore } from "@/store/auth-store";
+import { useSyncStore } from "@/store/sync-store";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { BlobImage } from "@/components/blob-image";
 import { useCovers } from "@/lib/covers";
+import { cn } from "@/lib/utils";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useProjects } from "@/store/app-store";
 import { useUiStore } from "@/store/ui-store";
@@ -37,6 +51,8 @@ export function AppSidebar() {
   const projects = useProjects();
   const covers = useCovers();
   const setNewProjectOpen = useUiStore((s) => s.setNewProjectOpen);
+  const user = useAuthStore((s) => s.user);
+  const sync = useSyncStore();
 
   const recent = hydrated
     ? [...projects]
@@ -133,11 +149,62 @@ export function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
         <div className="flex items-center justify-between px-1 group-data-[collapsible=icon]:justify-center">
-          <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-            Local-only prototype
+          <span
+            role="status"
+            className={cn(
+              "text-xs group-data-[collapsible=icon]:hidden",
+              sync.error || sync.uploadError ? "text-destructive" : "text-muted-foreground",
+            )}
+            title={sync.error ?? sync.uploadError ?? undefined}
+          >
+            {sync.error
+              ? "Sync problem"
+              : sync.uploadError
+                ? "Image upload failed"
+                : !sync.ready
+                  ? "Loading…"
+                  : sync.pendingUploads > 0
+                    ? `Uploading ${sync.pendingUploads} image${sync.pendingUploads === 1 ? "" : "s"}…`
+                    : "Synced to your account"}
           </span>
           <ThemeToggle />
         </div>
+        {user && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <SidebarMenuButton size="lg" tooltip={user.displayName ?? user.email ?? "Account"}>
+                <UserAvatar user={user} className="size-7" />
+                <span className="grid min-w-0 flex-1 text-left leading-tight">
+                  <span className="truncate text-sm font-medium">{user.displayName || user.email}</span>
+                  {user.displayName && (
+                    <span className="truncate text-xs text-muted-foreground">{user.email}</span>
+                  )}
+                </span>
+                <ChevronsUpDown className="ml-auto size-4 text-muted-foreground" />
+              </SidebarMenuButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" className="w-56">
+              <DropdownMenuLabel className="truncate">{user.email}</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/profile">
+                  <User /> Profile
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/settings">
+                  <Settings /> Settings
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => signOut().catch((err) => toast.error(authErrorMessage(err)))}
+              >
+                <LogOut /> Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

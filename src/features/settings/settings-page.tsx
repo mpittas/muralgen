@@ -1,21 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Cloud, Monitor, Moon, Sun, Trash } from "lucide-react";
+import Link from "next/link";
+import { Check, Cloud, Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,7 +20,6 @@ import { useSettingsStore } from "@/store/settings-store";
 export function SettingsPage() {
   const hydrated = useHydrated();
   const { theme, setTheme } = useTheme();
-  const resetAll = useAppStore((s) => s.resetAll);
   const counts = {
     projects: useAppStore((s) => Object.keys(s.projects).length),
     walls: useAppStore((s) => Object.keys(s.walls).length),
@@ -92,11 +81,13 @@ export function SettingsPage() {
                   <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     {p.name}
                     {p.free && p.status === "available" && <Badge variant="secondary">Free · no key</Badge>}
+                    {p.id === "openai" && <Badge variant="outline">Paid</Badge>}
                     {p.status !== "available" && <Badge variant="outline">Coming with the backend</Badge>}
                   </p>
                   <p className="mt-0.5 text-sm text-muted-foreground">{p.tagline}</p>
                   {p.limits && <p className="mt-1 text-xs text-muted-foreground">{p.limits}</p>}
                   {p.id === "ai-horde" && hydrated && <HordeKeyField />}
+                  {p.id === "openai" && hydrated && <OpenAiQualityField />}
                 </div>
               </li>
             ))}
@@ -104,8 +95,8 @@ export function SettingsPage() {
         </Section>
 
         <Section
-          title="Local data"
-          description="Until the Firebase backend is connected, everything lives in this browser."
+          title="Your data"
+          description="Projects are stored in your account (Firestore) and images in Cloud Storage, so they follow you across devices."
         >
           <div className="space-y-4 rounded-xl border bg-card p-4">
             <dl className="grid grid-cols-3 gap-4 text-sm">
@@ -115,41 +106,58 @@ export function SettingsPage() {
             </dl>
             {usage && (
               <p className="text-sm text-muted-foreground">
-                Using {formatBytes(usage.used)} of roughly {formatBytes(usage.quota)} available in this browser.
+                This browser caches {formatBytes(usage.used)} of images for fast loading (of roughly{" "}
+                {formatBytes(usage.quota)} available).
               </p>
             )}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive">
-                  <Trash /> Delete all local data
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete everything?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    All projects, wall photos, designs and compositions stored in this browser will
-                    be removed permanently.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    variant="destructive"
-                    onClick={() => {
-                      resetAll();
-                      toast.success("All local data deleted");
-                    }}
-                  >
-                    Delete everything
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <p className="text-sm text-muted-foreground">
+              Manage your account or delete your data from your{" "}
+              <Link href="/profile" className="underline underline-offset-2">
+                profile
+              </Link>
+              .
+            </p>
           </div>
         </Section>
       </div>
     </>
+  );
+}
+
+const OPENAI_QUALITIES = [
+  { id: "low", label: "Low", cost: "≈ $0.005 / image", hint: "Great for exploring ideas" },
+  { id: "medium", label: "Medium", cost: "≈ $0.05 / image", hint: "Sharper detail for finals" },
+] as const;
+
+function OpenAiQualityField() {
+  const quality = useSettingsStore((s) => s.openaiQuality);
+  const setQuality = useSettingsStore((s) => s.setOpenaiQuality);
+  return (
+    <fieldset className="mt-3 grid max-w-md gap-1.5">
+      <legend className="mb-1 text-xs font-medium">Image quality</legend>
+      <div className="grid grid-cols-2 gap-2">
+        {OPENAI_QUALITIES.map((q) => (
+          <button
+            key={q.id}
+            type="button"
+            aria-pressed={quality === q.id}
+            onClick={() => setQuality(q.id)}
+            className={cn(
+              "rounded-lg border p-2.5 text-left text-xs transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/60",
+              quality === q.id ? "border-primary ring-2 ring-primary" : "hover:border-foreground/30",
+            )}
+          >
+            <span className="block text-sm font-medium">{q.label}</span>
+            <span className="block text-muted-foreground">{q.cost}</span>
+            <span className="block text-muted-foreground">{q.hint}</span>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-pretty text-muted-foreground">
+        The OpenAI key is stored as a secret on the server and never reaches your browser. Costs are
+        estimates for a ~1 megapixel image.
+      </p>
+    </fieldset>
   );
 }
 

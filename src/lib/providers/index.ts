@@ -1,5 +1,6 @@
 import { aiHorde } from "./ai-horde";
 import { hfFlux } from "./hf-flux";
+import { openai } from "./openai";
 import { pollinations } from "./pollinations";
 import type { ImageProvider } from "./types";
 
@@ -34,7 +35,7 @@ export const providers: ImageProvider[] = [
   hfFlux,
   aiHorde,
   pollinations,
-  comingSoon("openai", "OpenAI GPT Image", "Image-to-image + inpainting on your wall photo."),
+  openai,
   comingSoon("google", "Google Imagen / Gemini", "High-fidelity generations via Firebase."),
   comingSoon("replicate", "Replicate (Flux, SDXL…)", "Open models, ControlNet and inpainting."),
   comingSoon("stability", "Stability AI", "Stable Diffusion with mask-based editing."),
